@@ -1,0 +1,339 @@
+<html><head><base href="https://websim.ai/diamonds-in-the-sky-svm/">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>天空中的鑽石：3D SVM 分類</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/dat-gui/0.7.7/dat.gui.min.js"></script>
+<script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+<style>
+  body {
+    margin: 0;
+    overflow: hidden;
+    font-family: 'Arial', sans-serif;
+    background-color: #000000;
+    color: #ffffff;
+  }
+  #canvas-container {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+  }
+  #plot-container {
+    position: absolute;
+    bottom: 10px;
+    left: 10px;
+    width: 300px;
+    height: 200px;
+    background-color: rgba(255, 255, 255, 0.1);
+  }
+  #info {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    background-color: rgba(0, 0, 0, 0.7);
+    padding: 10px;
+    border-radius: 5px;
+    max-width: 300px;
+  }
+  h1 {
+    margin: 0 0 10px 0;
+    font-size: 24px;
+  }
+  p {
+    margin: 5px 0;
+    font-size: 14px;
+  }
+  #controls {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    background-color: rgba(0, 0, 0, 0.7);
+    padding: 10px;
+    border-radius: 5px;
+  }
+  .control-group {
+    margin-bottom: 10px;
+  }
+  label {
+    display: block;
+    margin-bottom: 5px;
+  }
+  input[type="range"] {
+    width: 100%;
+  }
+  select {
+    width: 100%;
+    padding: 5px;
+    background-color: #333;
+    color: #fff;
+    border: none;
+  }
+</style>
+</head>
+<body>
+  <div id="canvas-container"></div>
+  <div id="plot-container"></div>
+  <div id="info">
+    <h1>天空中的鑽石：3D SVM 分類</h1>
+    <p>歡迎來到這個互動式的 3D 支持向量機（SVM）分類可視化。</p>
+    <p>亮黃色的球體代表一個類別，而淺藍色的球體代表另一個類別。</p>
+    <p>透明的白色球體代表 SVM 的決策邊界。</p>
+    <p>使用滑鼠來旋轉視角，滾輪可以縮放。</p>
+    <p>使用右側的控制面板調整 SVM 參數，觀察它們如何影響分類邊界。</p>
+  </div>
+  <div id="controls">
+    <div class="control-group">
+      <label for="kernel">核函數：</label>
+      <select id="kernel">
+        <option value="linear">線性</option>
+        <option value="poly">多項式</option>
+        <option value="rbf" selected>RBF</option>
+        <option value="sigmoid">Sigmoid</option>
+      </select>
+    </div>
+    <div class="control-group">
+      <label for="c">C（正則化）：</label>
+      <input type="range" id="c" min="0.1" max="10" step="0.1" value="1">
+      <span id="c-value">1</span>
+    </div>
+    <div class="control-group">
+      <label for="gamma">Gamma：</label>
+      <input type="range" id="gamma" min="0.01" max="1" step="0.01" value="0.1">
+      <span id="gamma-value">0.1</span>
+    </div>
+    <div class="control-group">
+      <label for="particle-count">粒子數量：</label>
+      <input type="range" id="particle-count" min="100" max="2000" step="100" value="1000">
+      <span id="particle-count-value">1000</span>
+    </div>
+  </div>
+
+  <script>
+    let scene, camera, renderer, controls;
+    let spheres = [], svmSurface;
+    const params = {
+      kernel: 'rbf',
+      C: 1.0,
+      gamma: 0.1,
+      particleCount: 1000
+    };
+
+    function init() {
+      scene = new THREE.Scene();
+      camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+      camera.position.z = 15;
+
+      renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+      controls = new THREE.OrbitControls(camera, renderer.domElement);
+      controls.enableDamping = true;
+      controls.dampingFactor = 0.05;
+
+      createStarfield();
+      createSpheres();
+      createSVMSurface();
+      setupControls();
+      create2DPlot();
+
+      window.addEventListener('resize', onWindowResize, false);
+    }
+
+    function createStarfield() {
+      const geometry = new THREE.BufferGeometry();
+      const vertices = [];
+
+      for (let i = 0; i < 10000; i++) {
+        vertices.push(
+          Math.random() * 2000 - 1000,
+          Math.random() * 2000 - 1000,
+          Math.random() * 2000 - 1000
+        );
+      }
+
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+
+      const material = new THREE.PointsMaterial({ color: 0xffffff, size: 0.1 });
+      const stars = new THREE.Points(geometry, material);
+      scene.add(stars);
+    }
+
+    function createSpheres() {
+      const geometry = new THREE.SphereGeometry(0.1, 32, 32);
+      const material1 = new THREE.MeshPhongMaterial({ color: 0xFFFF00, shininess: 100 }); // 亮黄色
+      const material2 = new THREE.MeshPhongMaterial({ color: 0xADD8E6, shininess: 100 }); // 浅蓝色
+
+      for (let i = 0; i < params.particleCount; i++) {
+        const r = Math.pow(Math.random(), 1/3) * 10;
+        const theta = Math.random() * Math.PI;
+        const phi = Math.random() * 2 * Math.PI;
+        const x = r * Math.sin(theta) * Math.cos(phi);
+        const y = r * Math.sin(theta) * Math.sin(phi);
+        const z = r * Math.cos(theta);
+
+        const sphere = new THREE.Mesh(geometry, r <= 5 ? material1 : material2);
+        sphere.position.set(x, y, z);
+        scene.add(sphere);
+        spheres.push(sphere);
+      }
+
+      const ambientLight = new THREE.AmbientLight(0x404040);
+      scene.add(ambientLight);
+
+      const directionalLight = new THREE.DirectionalLight(0xffffff, 0.5);
+      directionalLight.position.set(1, 1, 1);
+      scene.add(directionalLight);
+    }
+
+    function createSVMSurface() {
+      const geometry = new THREE.SphereGeometry(5, 32, 32);
+      const material = new THREE.MeshBasicMaterial({
+        color: 0xffffff,
+        transparent: true,
+        opacity: 0.2,
+        side: THREE.DoubleSide
+      });
+      svmSurface = new THREE.Mesh(geometry, material);
+      scene.add(svmSurface);
+    }
+
+    function setupControls() {
+      const kernelSelect = document.getElementById('kernel');
+      const cSlider = document.getElementById('c');
+      const gammaSlider = document.getElementById('gamma');
+      const particleCountSlider = document.getElementById('particle-count');
+
+      kernelSelect.addEventListener('change', updateSVM);
+      cSlider.addEventListener('input', updateSVM);
+      gammaSlider.addEventListener('input', updateSVM);
+      particleCountSlider.addEventListener('input', updateParticleCount);
+
+      function updateSVM() {
+        params.kernel = kernelSelect.value;
+        params.C = parseFloat(cSlider.value);
+        params.gamma = parseFloat(gammaSlider.value);
+
+        document.getElementById('c-value').textContent = params.C.toFixed(1);
+        document.getElementById('gamma-value').textContent = params.gamma.toFixed(2);
+
+        let radius;
+        switch(params.kernel) {
+          case 'linear':
+            radius = 5 + params.C * 0.1;
+            break;
+          case 'poly':
+            radius = 5 + params.C * 0.2;
+            break;
+          case 'rbf':
+            radius = 5 + params.gamma * 2;
+            break;
+          case 'sigmoid':
+            radius = 5 + params.C * params.gamma * 0.3;
+            break;
+        }
+        svmSurface.scale.set(radius/5, radius/5, radius/5);
+        update2DPlot();
+      }
+
+      function updateParticleCount() {
+        params.particleCount = parseInt(particleCountSlider.value);
+        document.getElementById('particle-count-value').textContent = params.particleCount;
+
+        // Remove existing spheres
+        spheres.forEach(sphere => scene.remove(sphere));
+        spheres = [];
+
+        // Create new spheres
+        createSpheres();
+        update2DPlot();
+      }
+    }
+
+    function create2DPlot() {
+      const x1 = [], y1 = [], x2 = [], y2 = [];
+      spheres.forEach(sphere => {
+        if (sphere.position.length() <= 5) {
+          x1.push(sphere.position.x);
+          y1.push(sphere.position.y);
+        } else {
+          x2.push(sphere.position.x);
+          y2.push(sphere.position.y);
+        }
+      });
+
+      const trace1 = {
+        x: x1,
+        y: y1,
+        mode: 'markers',
+        type: 'scatter',
+        name: '類別 1',
+        marker: { color: 'yellow', size: 5 }
+      };
+
+      const trace2 = {
+        x: x2,
+        y: y2,
+        mode: 'markers',
+        type: 'scatter',
+        name: '類別 2',
+        marker: { color: 'lightblue', size: 5 }
+      };
+
+      const layout = {
+        title: '2D 投影',
+        xaxis: { title: 'X' },
+        yaxis: { title: 'Y' },
+        plot_bgcolor: 'rgba(0,0,0,0)',
+        paper_bgcolor: 'rgba(0,0,0,0)',
+        font: { color: '#ffffff' },
+        showlegend: false,
+        margin: { l: 40, r: 10, t: 40, b: 40 }
+      };
+
+      Plotly.newPlot('plot-container', [trace1, trace2], layout);
+    }
+
+    function update2DPlot() {
+      const x1 = [], y1 = [], x2 = [], y2 = [];
+      spheres.forEach(sphere => {
+        if (sphere.position.length() <= 5) {
+          x1.push(sphere.position.x);
+          y1.push(sphere.position.y);
+        } else {
+          x2.push(sphere.position.x);
+          y2.push(sphere.position.y);
+        }
+      });
+
+      const radius = svmSurface.scale.x * 5;
+      const theta = Array.from({length: 100}, (_, i) => i * 2 * Math.PI / 99);
+      const x = theta.map(t => radius * Math.cos(t));
+      const y = theta.map(t => radius * Math.sin(t));
+
+      Plotly.update('plot-container', {
+        x: [x1, x2, x],
+        y: [y1, y2, y]
+      }, {}, [0, 1, 2]);
+    }
+
+    function onWindowResize() {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    }
+
+    function animate() {
+      requestAnimationFrame(animate);
+      controls.update();
+      renderer.render(scene, camera);
+    }
+
+    init();
+    animate();
+  </script>
+</body>
+</html>
